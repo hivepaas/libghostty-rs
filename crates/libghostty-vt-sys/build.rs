@@ -91,6 +91,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=GHOSTTY_SOURCE_DIR");
     println!("cargo:rerun-if-env-changed=GHOSTTY_ZIG_SYSTEM_DIR");
     println!("cargo:rerun-if-env-changed=ZIG");
+    println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
     println!("cargo:rerun-if-env-changed=TARGET");
     println!("cargo:rerun-if-env-changed=HOST");
     println!("cargo:rerun-if-env-changed=DEBUG");
@@ -241,8 +242,17 @@ fn build_vendored(link_mode: LinkMode, target: &str) {
     // Pass -Dtarget only for non-iOS cross targets; native builds let zig
     // auto-detect the host. iOS builds run host-native inside the xcframework
     // emit, so they must not pass -Dtarget or a global --sysroot.
-    if target != host && ios_platform.is_none() {
-        let zig_target = zig_target(target);
+    //
+    // A macOS build with MACOSX_DEPLOYMENT_TARGET names its target too, at
+    // that version. Zig's auto-detected target is the host's macOS version,
+    // so the library would need that macOS or a newer one, while rustc builds
+    // everything else for the deployment target.
+    let macos_min = macos_deployment_target(target);
+    if ios_platform.is_none() && (target != host || macos_min.is_some()) {
+        let mut zig_target = zig_target(target);
+        if let Some(version) = &macos_min {
+            zig_target = zig_target.replacen("-macos-", &format!("-macos.{version}-"), 1);
+        }
         build.arg(format!("-Dtarget={zig_target}"));
     }
 
@@ -579,4 +589,24 @@ fn zig_target(target: &str) -> String {
         other => panic!("unsupported Rust target for vendored build: {other}"),
     };
     value.to_owned()
+}
+
+/// The oldest macOS a macOS target's build runs on, when
+/// MACOSX_DEPLOYMENT_TARGET says, as rustc reads it. `None` for other targets.
+fn macos_deployment_target(target: &str) -> Option<String> {
+    if !target.ends_with("-apple-darwin") {
+        return None;
+    }
+    let version = env::var("MACOSX_DEPLOYMENT_TARGET").ok()?;
+    let version = version.trim();
+    if version.is_empty() {
+        return None;
+    }
+    assert!(
+        version
+            .split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())),
+        "MACOSX_DEPLOYMENT_TARGET is not a version such as 11.0: {version:?}"
+    );
+    Some(version.to_owned())
 }
