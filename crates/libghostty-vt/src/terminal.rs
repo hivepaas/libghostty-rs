@@ -331,16 +331,20 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     ///
     /// Like [`Self::vt_write`], the input is assumed to be untrusted.
     pub fn vt_write_until_ground(&mut self, data: &[u8]) -> Result<Option<usize>> {
-        let mut consumed = 0;
+        // Ghostty 1.4 replaced ghostty_terminal_vt_write_until_ground with
+        // ghostty_terminal_vt_write_until, which stops at any of several
+        // boundaries; asking for ground alone keeps the old meaning.
+        let mut stop = ffi::sized!(ffi::TerminalWriteStop);
         let result = unsafe {
-            ffi::ghostty_terminal_vt_write_until_ground(
+            ffi::ghostty_terminal_vt_write_until(
                 self.inner.as_raw(),
                 data.as_ptr(),
                 data.len(),
-                &raw mut consumed,
+                ffi::TerminalBoundary::GROUND as u32,
+                &raw mut stop,
             )
         };
-        from_optional_result_with_len(result, consumed)
+        from_optional_result_with_len(result, stop.consumed)
     }
 
     /// Whether VT processing is at ground.
